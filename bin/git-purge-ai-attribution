@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# git-purge-ai-attribution
+# Rewrite a repository's history to remove Co-Authored-By trailers that credit
+# an AI agent. Human co-authors and every other line are preserved.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: git-purge-ai-attribution [options]
+
+Rewrite the current repository's history and strip every Co-Authored-By
+trailer that credits an AI agent.
+
+Options:
+  -y, --yes       Do not ask for confirmation.
+  -n, --dry-run   Show what would be removed, change nothing.
+      --keep-remote
+                  Do not remove the "origin" remote before rewriting.
+                  (git-filter-repo removes it by default to avoid an
+                  accidental force-push; use this only if you know why.)
+  -h, --help      Show this help.
+
+The rewrite changes every commit SHA. You will have to force-push afterwards
+and every collaborator must re-clone or hard-reset.
+EOF
+}
+
+ASSUME_YES=0
+DRY_RUN=0
+KEEP_REMOTE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -y | --yes) ASSUME_YES=1 ;;
+    -n | --dry-run) DRY_RUN=1 ;;
+    --keep-remote) KEEP_REMOTE=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository"
+command -v git-filter-repo >/dev/null 2>&1 || die "git-filter-repo is required (pip install git-filter-repo, or apt install git-filter-repo)"
+
+TOP=$(git rev-parse --show-toplevel)
+cd "$TOP"
+
+[ -z "$(git status --porcelain)" ] || die "working tree is not clean, commit or stash your changes first"
+
+HOOKS_DIR=$(git config --get core.hookspath 2>/dev/null || true)
+REGEX_FILE=""
+for candidate in \
+  "${HOOKS_DIR:+$HOOKS_DIR/ai-agents.regex}" \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/git/hooks/ai-agents.regex" \
+  "$(cd "$(dirname "$0")" && pwd)/../hooks/ai-agents.regex"; do
+  if [ -n "$candidate" ] && [ -r "$candidate" ]; then
+    REGEX_FILE="$candidate"
+    break
+  fi
+done
+
+if [ -n "$REGEX_FILE" ]; then
+  AGENT_TOKENS=$(tr -d '\n' <"$REGEX_FILE")
+else
+  AGENT_TOKENS='claude|anthropic|openai|chatgpt|codex|copilot|gemini|bard|cursor|aider|windsurf|codeium|devin|cognition\.ai|sourcegraph|cody|tabnine|supermaven|continue\.dev|opencode|mimocode|mimo-code|qwen|alibaba|kimi|moonshot|deepseek|mistral|codestral|cohere|grok|x\.ai|zed\.dev|ampcode|cline|roo-code|kilocode|augmentcode|factory\.ai|droid|warp|trae|goose|openhands|sweep|mentat|gpt-?[0-9]|claude-[a-z0-9]|o[134]-mini'
+fi
+
+export AGENT_TOKENS
+
+COUNT=$(git log --all --format=%B | grep -Eci "^[[:space:]]*co-authored-by:.*(${AGENT_TOKENS})" || true)
+COUNT=${COUNT:-0}
+
+printf 'Repository: %s\n' "$TOP"
+printf 'Branches:   %s\n' "$(git for-each-ref --format='%(refname:short)' refs/heads | paste -sd ', ' -)"
+printf 'AI co-author trailers found in history: %s\n' "$COUNT"
+
+if [ "$COUNT" -eq 0 ]; then
+  echo "Nothing to purge."
+  exit 0
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo
+  echo "Dry run, matching lines:"
+  git log --all --format='%h %s%n%b' | grep -Ei "^[[:space:]]*co-authored-by:.*(${AGENT_TOKENS})" | sort -u
+  exit 0
+fi
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  echo
+  echo "This rewrites every commit SHA in this repository."
+  echo "Make a backup first (git clone --mirror, or a copy of the folder)."
+  printf 'Continue? [y/N] '
+  read -r answer
+  case "$answer" in
+    y | Y | yes | YES) ;;
+    *) echo "Aborted."; exit 1 ;;
+  esac
+fi
+
+BACKUP_DIR="${TOP}.git-backup-$(date +%Y%m%d-%H%M%S)"
+git clone --mirror "$TOP" "$BACKUP_DIR" >/dev/null 2>&1 || die "could not create a backup in $BACKUP_DIR"
+printf 'Backup created: %s\n' "$BACKUP_DIR"
+
+ORIGIN_URL=$(git remote get-url origin 2>/dev/null || true)
+
+git filter-repo --force --message-callback '
+import os, re
+pattern = re.compile(rb"^[ \t]*co-authored-by:.*(" + os.environ["AGENT_TOKENS"].encode() + rb")", re.IGNORECASE)
+lines = message.split(b"\n")
+return b"\n".join(line for line in lines if not pattern.match(line))
+'
+
+REMAINING=$(git log --all --format=%B | grep -Eci "^[[:space:]]*co-authored-by:.*(${AGENT_TOKENS})" || true)
+REMAINING=${REMAINING:-0}
+
+if [ "$KEEP_REMOTE" -eq 1 ] && [ -n "$ORIGIN_URL" ]; then
+  git remote add origin "$ORIGIN_URL" 2>/dev/null || git remote set-url origin "$ORIGIN_URL"
+  printf 'Remote origin restored: %s\n' "$ORIGIN_URL"
+fi
+
+printf '\nDone. AI co-author trailers remaining: %s\n' "$REMAINING"
+printf 'Backup: %s\n' "$BACKUP_DIR"
+cat <<EOF
+
+Next steps:
+  1. Check the result: git log --format='%h %s'
+  2. Re-add your remote if needed: git remote add origin <url>
+  3. Force-push every branch and tag:
+       git push --force --all
+       git push --force --tags
+  4. Tell collaborators to re-clone or run:
+       git fetch --all && git reset --hard origin/<branch>
+
+EOF

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Global commit-msg hook (core.hooksPath).
+# Strip every Co-Authored-By trailer that credits an AI agent (any vendor),
+# while keeping human co-authors and everything else in the message.
+set -euo pipefail
+
+COMMIT_MSG_FILE="${1:-}"
+[ -n "$COMMIT_MSG_FILE" ] && [ -f "$COMMIT_MSG_FILE" ] || exit 0
+
+HOOK_DIR=$(cd "$(dirname "$0")" && pwd)
+REGEX_FILE="$HOOK_DIR/ai-agents.regex"
+
+if [ -r "$REGEX_FILE" ]; then
+  AGENT_TOKENS=$(tr -d '\n' <"$REGEX_FILE")
+else
+  # Fallback if ai-agents.regex is missing next to the hook.
+  AGENT_TOKENS='claude|anthropic|openai|chatgpt|codex|copilot|gemini|bard|cursor|aider|windsurf|codeium|devin|cognition\.ai|sourcegraph|cody|tabnine|supermaven|continue\.dev|opencode|mimocode|mimo-code|qwen|alibaba|kimi|moonshot|deepseek|mistral|codestral|cohere|grok|x\.ai|zed\.dev|ampcode|cline|roo-code|kilocode|augmentcode|factory\.ai|droid|warp|trae|goose|openhands|sweep|mentat|gpt-?[0-9]|claude-[a-z0-9]|o[134]-mini'
+fi
+
+TRAILER_RE="^[[:space:]]*[Cc]o-[Aa]uthored-[Bb]y:.*(${AGENT_TOKENS})"
+
+grep -Eqi -- "$TRAILER_RE" "$COMMIT_MSG_FILE" || exit 0
+
+tmp=$(mktemp)
+clean=$(mktemp)
+trap 'rm -f "$tmp" "$clean"' EXIT
+
+grep -Evi -- "$TRAILER_RE" "$COMMIT_MSG_FILE" >"$tmp" || true
+
+# Collapse the trailing run of blank lines left behind by removed trailers.
+awk 'BEGIN{b=0} {if ($0 ~ /^[[:space:]]*$/) {b++; next} for (i=0;i<b;i++) print ""; b=0; print}' "$tmp" >"$clean"
+cat "$clean" >"$COMMIT_MSG_FILE"
