@@ -19,7 +19,10 @@ Co-Authored-By: Jane Doe <jane@example.com>      <-- conservé
 - [Pourquoi](#pourquoi)
 - [Comment ça marche](#comment-ça-marche)
 - [Prérequis](#prérequis)
+- [Installation en une ligne](#installation-en-une-ligne)
+- [Interface interactive (TUI)](#interface-interactive-tui)
 - [Installation sous Linux](#installation-sous-linux)
+- [Installation sous macOS](#installation-sous-macos)
 - [Installation sous Windows](#installation-sous-windows)
 - [Installer pour un seul dépôt](#installer-pour-un-seul-dépôt)
 - [Vérifier que ça fonctionne](#vérifier-que-ça-fonctionne)
@@ -118,6 +121,97 @@ pipx install git-filter-repo
 Sous Linux, tu peux remplacer `sudo` par `pkexec` si tu préfères une boîte de
 dialogue graphique. Les deux fonctionnent.
 
+## Installation en une ligne
+
+Le one-liner télécharge la dernière version du dépôt dans un dossier temporaire et
+lance l'installateur. Rien n'est laissé derrière après l'opération.
+
+### Linux et macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash
+```
+
+Dans un terminal, cette commande ouvre l'[interface interactive](#interface-interactive-tui).
+Sans terminal (script, CI), elle lance l'installation standard.
+
+Installation directe sans menu :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash -s -- --yes
+```
+
+Désinstallation :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash -s -- --uninstall
+```
+
+### Windows
+
+Dans PowerShell :
+
+```powershell
+irm https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.ps1 | iex
+```
+
+Le script télécharge l'archive, l'extrait dans le dossier temporaire, lance
+`install.ps1`, puis nettoie le dossier temporaire.
+
+### Vérifier avant d'exécuter
+
+Un one-liner exécute du code distant. Si tu préfères lire avant, télécharge le
+script et inspecte-le :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh -o get.sh
+less get.sh
+bash get.sh
+```
+
+## Interface interactive (TUI)
+
+`tui.sh` fournit un menu en pur Bash, sans dépendance externe. Il fonctionne sous
+Linux, macOS et Git Bash.
+
+```bash
+./tui.sh
+```
+
+Ou via le one-liner, sans argument :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash
+```
+
+Menu :
+
+```text
+  1. Installer / mettre à jour
+  2. Vérifier l installation
+  3. Voir l état
+  4. Nettoyer l historique du dépôt courant
+  5. Désinstaller
+  6. Quitter
+```
+
+Navigation : flèches haut et bas, `j` et `k`, ou les chiffres. `Entrée` valide,
+`q` quitte.
+
+Chaque action fait ce qu'elle annonce :
+
+- **Installer / mettre à jour** : copie le hook, la liste et l'outil, puis règle
+  `core.hooksPath`.
+- **Vérifier l installation** : contrôle les fichiers, la configuration, et exécute
+  le hook sur un message de test pour confirmer que le trailer IA part et que le
+  co-auteur humain reste.
+- **Voir l état** : affiche l'OS, Git, les chemins, `core.hooksPath`, la présence de
+  `git-filter-repo` et le nombre de trailers IA dans le dépôt courant.
+- **Nettoyer l historique** : lance `git-purge-ai-attribution` sur le dépôt courant,
+  avec dry run et confirmation intégrés.
+- **Désinstaller** : retire les fichiers et désactive `core.hooksPath` s'il pointe
+  vers ce dossier.
+
 ## Installation sous Linux
 
 ### Installation rapide
@@ -181,6 +275,81 @@ Exemple :
 ```bash
 XDG_CONFIG_HOME="$HOME/.config" XDG_BIN_HOME="$HOME/.local/bin" ./install.sh
 ```
+
+## Installation sous macOS
+
+Le même `install.sh` fonctionne sous macOS. Il détecte le système et adapte les
+messages.
+
+### Prérequis macOS
+
+Git est fourni par les Xcode Command Line Tools. Si `git --version` échoue :
+
+```bash
+xcode-select --install
+```
+
+Pour `git-filter-repo` :
+
+```bash
+brew install git-filter-repo
+# ou, sans Homebrew
+pipx install git-filter-repo
+```
+
+### Installation rapide
+
+```bash
+git clone https://github.com/MattiaPARRINELLO/no-ai-attribution.git
+cd no-ai-attribution
+./install.sh
+```
+
+Ou sans cloner :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash
+```
+
+### Installation manuelle
+
+```bash
+mkdir -p ~/.config/git/hooks ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/hooks/commit-msg \
+  -o ~/.config/git/hooks/commit-msg
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/hooks/ai-agents.regex \
+  -o ~/.config/git/hooks/ai-agents.regex
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/bin/git-purge-ai-attribution \
+  -o ~/.local/bin/git-purge-ai-attribution
+chmod +x ~/.config/git/hooks/commit-msg ~/.local/bin/git-purge-ai-attribution
+git config --global core.hooksPath ~/.config/git/hooks
+```
+
+### Notes spécifiques à macOS
+
+- **`~/.local/bin` n'est pas dans le `PATH` par défaut.** Sous zsh :
+
+  ```bash
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+  source ~/.zshrc
+  ```
+
+- **Bash 3.2 suffit.** macOS livre Bash 3.2 par défaut. L'installeur et la TUI
+  restent compatibles, il n'est pas nécessaire d'installer Bash 5 avec Homebrew.
+
+- **Apple Silicon et Intel** : aucune différence, les scripts sont indépendants de
+  l'architecture.
+
+- **Gatekeeper** : si macOS refuse d'exécuter un script téléchargé, retire
+  l'attribut de quarantaine :
+
+  ```bash
+  xattr -d com.apple.quarantine ./install.sh ./tui.sh ./get.sh 2>/dev/null || true
+  chmod +x ./install.sh ./tui.sh ./get.sh
+  ```
+
+- **Homebrew** : si `brew` n'est pas installé, `pipx install git-filter-repo`
+  fonctionne aussi.
 
 ## Installation sous Windows
 
@@ -542,6 +711,14 @@ Si le hook est installé par dépôt, modifie simplement
 
 ## Désinstaller
 
+Le plus simple, avec le one-liner :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash -s -- --uninstall
+```
+
+Ou depuis la TUI, option 5.
+
 Sous Linux et macOS, ou dans Git Bash :
 
 ```bash
@@ -713,6 +890,36 @@ repartir de la version réécrite :
 ```bash
 git fetch origin
 git reset --hard origin/main
+```
+
+### La TUI ne s'ouvre pas avec le one-liner
+
+La TUI a besoin d'un terminal. Si tu lances la commande depuis un script, une CI
+ou un gestionnaire de tâches, elle bascule automatiquement sur l'installation
+standard. Pour forcer le menu :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh -o get.sh
+bash get.sh
+```
+
+### `curl: (22) The requested URL returned error: 404`
+
+Le dépôt ou la branche a changé. Vérifie l'URL, ou force une référence :
+
+```bash
+NO_AI_ATTRIBUTION_REF=main \
+  curl -fsSL https://raw.githubusercontent.com/MattiaPARRINELLO/no-ai-attribution/main/get.sh | bash
+```
+
+### macOS refuse le script ou `brew` est absent
+
+Installe les Xcode Command Line Tools (`xcode-select --install`) et utilise
+`pipx install git-filter-repo` au lieu de Homebrew. Pour un script téléchargé :
+
+```bash
+xattr -d com.apple.quarantine ./install.sh 2>/dev/null || true
+chmod +x ./install.sh
 ```
 
 ## Limites
